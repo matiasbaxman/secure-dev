@@ -1,0 +1,129 @@
+{
+ "uid": "securedev",
+ "title": "SecureDev - Monitorizaci\u00f3n de producci\u00f3n",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "5s",
+ "time": {
+  "from": "now-30m",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "timeseries",
+   "title": "Solicitudes por segundo (por status HTTP)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (status) (rate(securedev_http_requests_total[1m]))",
+     "legendFormat": "{{status}}"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Intentos de login fallidos (\u00faltimo minuto)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "increase(securedev_login_failures_total[1m])",
+     "legendFormat": "fallos login"
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Errores 4xx/5xx por segundo",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum(rate(securedev_http_requests_total{status=~\"4..|5..\"}[1m]))",
+     "legendFormat": "errores"
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "type": "timeseries",
+   "title": "Latencia p95 (s)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "histogram_quantile(0.95, sum by (le) (rate(securedev_http_request_duration_seconds_bucket[1m])))",
+     "legendFormat": "p95"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 5,
+   "type": "stat",
+   "title": "Aplicaci\u00f3n arriba (1=UP)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 16,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "up{job=\"securedev\"}",
+     "legendFormat": "up"
+    }
+   ]
+  }
+ ]
+}

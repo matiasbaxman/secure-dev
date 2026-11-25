@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    groups:
+      python-deps:
+        patterns: ["*"]
+    labels: ["dependencies", "security"]
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/jenkins"
+    schedule:
+      interval: "weekly"
