@@ -4,7 +4,9 @@ Solo debe ejecutarse en el laboratorio local. El alumnado debe revisar y corregi
 los defectos; estos comentarios no enumeran las respuestas de la evaluación.
 """
 
+import hmac
 import os
+import secrets
 import sqlite3
 import time
 from pathlib import Path
@@ -32,7 +34,12 @@ LOGIN_FAILURES = Counter(
 
 def create_app(database_path=None):
     app = Flask(__name__)
-    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "clave-insegura-solo-laboratorio")
+    # CORRECCIÓN: sin clave hardcodeada; si no hay SECRET_KEY se genera una aleatoria
+    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY") or secrets.token_hex(32)
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = os.getenv("COOKIE_SECURE") == "1"
+    failed_logins = {}  # ip -> timestamps (límite simple anti fuerza bruta)
     app.config["DATABASE_PATH"] = str(
         database_path or os.getenv("DATABASE_PATH", str(Path(__file__).with_name("securedev.db")))
     )
@@ -53,12 +60,38 @@ def create_app(database_path=None):
     def start_request_timer():
         g.request_started_at = time.perf_counter()
 
+    @app.before_request
+    def csrf_protect():
+        # CORRECCIÓN: token CSRF obligatorio en todos los POST
+        if request.method == "POST":
+            sent = request.form.get("csrf_token", "")
+            expected = session.get("csrf", "")
+            if not expected or not hmac.compare_digest(sent, expected):
+                abort(400)
+
+    @app.context_processor
+    def inject_csrf():
+        if "csrf" not in session:
+            session["csrf"] = secrets.token_hex(16)
+        return {"csrf_token": session["csrf"]}
+
     @app.after_request
     def record_request(response):
         if request.endpoint != "metrics":
             endpoint = request.endpoint or "unknown"
             HTTP_REQUESTS.labels(endpoint, request.method, str(response.status_code)).inc()
             HTTP_DURATION.labels(endpoint).observe(time.perf_counter() - g.request_started_at)
+        # CORRECCIÓN: cabeceras de seguridad
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'"
+        )
+        response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        response.headers["Cache-Control"] = "no-store"
         return response
 
     with app.app_context():
@@ -118,6 +151,11 @@ def create_app(database_path=None):
     def login():
         error = None
         if request.method == "POST":
+            ip = request.remote_addr
+            now = time.time()
+            failed_logins[ip] = [t for t in failed_logins.get(ip, []) if now - t < 300]
+            if len(failed_logins[ip]) >= 10:  # CORRECCIÓN: bloqueo temporal por fuerza bruta
+                return render_template("login.html", error="Demasiados intentos. Espera unos minutos."), 429
             username = request.form.get("username", "")
             password = request.form.get("password", "")
             user = db().execute(
@@ -129,6 +167,7 @@ def create_app(database_path=None):
                 session["username"] = user["username"]
                 return redirect(url_for("index"))
             LOGIN_FAILURES.inc()
+            failed_logins.setdefault(ip, []).append(time.time())
             error = "Credenciales inválidas"
         return render_template("login.html", error=error)
 
@@ -144,7 +183,8 @@ def create_app(database_path=None):
         item = db().execute(
             "SELECT id, owner_id, title, body FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone()
-        if item is None:
+        # CORRECCIÓN IDOR: solo el dueño puede ver su ticket
+        if item is None or item["owner_id"] != current_user():
             abort(404)
         comments = db().execute(
             "SELECT body FROM comments WHERE ticket_id = ? ORDER BY id", (ticket_id,)
@@ -155,9 +195,12 @@ def create_app(database_path=None):
     def add_comment(ticket_id):
         if not current_user():
             return redirect(url_for("login"))
-        if db().execute("SELECT id FROM tickets WHERE id = ?", (ticket_id,)).fetchone() is None:
+        # CORRECCIÓN IDOR: solo se comenta en tickets propios
+        if db().execute(
+            "SELECT id FROM tickets WHERE id = ? AND owner_id = ?", (ticket_id, current_user())
+        ).fetchone() is None:
             abort(404)
-        body = request.form.get("body", "")
+        body = request.form.get("body", "")[:2000]
         db().execute(
             "INSERT INTO comments (ticket_id, author_id, body) VALUES (?, ?, ?)",
             (ticket_id, current_user(), body),
@@ -170,8 +213,11 @@ def create_app(database_path=None):
         if not current_user():
             return redirect(url_for("login"))
         query = request.args.get("q", "")
-        sql = f"SELECT id, title FROM tickets WHERE title LIKE '%{query}%' ORDER BY id"
-        tickets = db().execute(sql).fetchall()
+        # CORRECCIÓN SQLi: consulta parametrizada + solo tickets del usuario
+        tickets = db().execute(
+            "SELECT id, title FROM tickets WHERE title LIKE ? AND owner_id = ? ORDER BY id",
+            (f"%{query}%", current_user()),
+        ).fetchall()
         return render_template("search.html", tickets=tickets, query=query)
 
     @app.get("/health")
@@ -186,4 +232,4 @@ def create_app(database_path=None):
 
 
 if __name__ == "__main__":
-    create_app().run(host="0.0.0.0", port=8000)
+    create_app().run(host="127.0.0.1", port=8000)  # solo desarrollo local; en Docker corre gunicorn
