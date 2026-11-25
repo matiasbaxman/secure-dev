@@ -12,4 +12,4 @@ COPY tests ./tests
 ENV PYTHONUNBUFFERED=1 DATABASE_PATH=/data/securedev.db
 USER appuser
 EXPOSE 8000
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "app:create_app()"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--threads", "4", "app:create_app()"]
